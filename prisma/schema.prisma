@@ -1,0 +1,36 @@
+// prisma/schema.prisma
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model CryptoCurrency {
+  id           Int            @id @default(autoincrement())
+  symbol       String         @unique
+  name         String
+  slug         String?        @unique
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  priceHistory PriceHistory[]
+
+  @@index([symbol])
+}
+
+model PriceHistory {
+  id        Int      @id @default(autoincrement())
+  cryptoId  Int
+  price     Float
+  marketCap Float?
+  volume24h Float?
+  change24h Float?
+  timestamp DateTime @default(now())
+
+  crypto CryptoCurrency @relation(fields: [cryptoId], references: [id])
+
+  @@index([cryptoId])
+  @@index([timestamp])
+}
