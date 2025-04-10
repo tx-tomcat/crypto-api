@@ -31,7 +31,6 @@ COPY --from=build /usr/app/dist ./dist
 COPY --from=build /usr/app/package.json ./package.json
 COPY --from=build /usr/app/pnpm-lock.yaml ./pnpm-lock.yaml
 COPY --from=build /usr/app/prisma ./prisma
-COPY --from=build /usr/app/templates ./templates
 
 RUN npx prisma generate
 
