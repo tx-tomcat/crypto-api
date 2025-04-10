@@ -1,0 +1,83 @@
+services:
+  api:
+    build: .
+    expose:
+      - '6000'
+    restart: always
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV="production"
+      - NODE_OPTIONS="--max-old-space-size=16384"
+      - ENABLE_CACHE_WARMUP="false"
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:6000/api/health']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          cpus: '8' # Increased for CPU-only operation
+          memory: 24G # Increased for CPU-only operation
+        reservations:
+          cpus: '4'
+          memory: 16G
+      restart_policy:
+        condition: on-failure
+        max_attempts: 3
+        window: 120s
+    networks:
+      - app_network
+
+  redis:
+    image: 'redis:7.2-alpine'
+    restart: unless-stopped
+    command: >
+      redis-server 
+      --maxmemory 24gb
+      --maxmemory-policy allkeys-lru
+      --appendonly no
+      --save ""
+    volumes:
+      - 'redis_data:/data'
+    ports:
+      - 6379
+    env_file:
+      - .env
+    deploy:
+      resources:
+        limits:
+          cpus: '4.0'
+          memory: 28G
+        reservations:
+          cpus: '2.0'
+          memory: 24G
+    networks:
+      - app_network
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+networks:
+  app_network:
+    driver: bridge
+
+volumes:
+  redis_data:
+    driver: local
+  caddy_data:
+    driver: local
+  caddy_config:
+    driver: local
