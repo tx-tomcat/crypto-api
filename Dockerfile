@@ -14,9 +14,17 @@ COPY package.json pnpm-lock.yaml ./
 COPY prisma ./prisma/
 
 FROM base AS build
+
+# Install dependencies first
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --frozen-lockfile
+
+# Generate Prisma client after installing dependencies
 RUN npx prisma generate
+
+# Copy the rest of the application code
 COPY . .
+
+# Build the application
 RUN pnpm run build
 
 FROM node:22 AS runner
@@ -32,6 +40,7 @@ COPY --from=build /usr/app/package.json ./package.json
 COPY --from=build /usr/app/pnpm-lock.yaml ./pnpm-lock.yaml
 COPY --from=build /usr/app/prisma ./prisma
 
-RUN npx prisma generate
+# Generate Prisma client again in the runner stage
+RUN pnpm install --prod --frozen-lockfile && npx prisma generate
 
 CMD [ "pnpm", "start:prod" ]
