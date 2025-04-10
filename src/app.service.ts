@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unsafe-return */
-/* eslint-disable @typescript-eslint/no-unsafe-call */
+
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
 import { HttpService } from '@nestjs/axios';
@@ -89,22 +89,18 @@ export class CryptoService {
       }
     }
 
-    const apiKey = this.configService.get<string>('COINGECKO_API_KEY');
-    const url = `https://api.coingecko.com/api/v3/coins/markets`;
+    const apiKey = this.configService.get<string>('COINMARKETCAP_API_KEY');
+    const url = `https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest`;
 
     try {
       const { data } = await firstValueFrom(
         this.httpService
           .get(url, {
+            headers: {
+              'X-CMC_PRO_API_KEY': apiKey || '',
+            },
             params: {
-              vs_currency: 'usd',
-              ids: await this.getIdFromSymbol(normalizedSymbol),
-              order: 'market_cap_desc',
-              per_page: 1,
-              page: 1,
-              sparkline: false,
-              price_change_percentage: '24h',
-              x_cg_demo_api_key: apiKey,
+              symbol: normalizedSymbol,
             },
           })
           .pipe(
@@ -120,35 +116,37 @@ export class CryptoService {
           ),
       );
 
-      if (!data || data.length === 0) {
+      if (!data || !data.data || !data.data[normalizedSymbol]) {
         throw new NotFoundException(
           `Cryptocurrency ${normalizedSymbol} not found`,
         );
       }
 
+      const coinData = data.data[normalizedSymbol];
+      const quote = coinData.quote.USD;
+
       if (cryptoEntity) {
         await this.prisma.priceHistory.create({
           data: {
             cryptoId: cryptoEntity.id,
-            price: data[0].current_price || 0,
-            marketCap: data[0].market_cap || 0,
-            volume24h: data[0].total_volume || 0,
-            change24h: data[0].price_change_percentage_24h || 0,
+            price: quote.price || 0,
+            marketCap: quote.market_cap || 0,
+            volume24h: quote.volume_24h || 0,
+            change24h: quote.percent_change_24h || 0,
           },
         });
       } else {
-        // Create crypto and price history if it doesn't exist yet
         await this.prisma.cryptoCurrency.create({
           data: {
-            symbol: data[0].symbol.toUpperCase(),
-            name: data[0].name,
-            slug: data[0].id,
+            symbol: coinData.symbol,
+            name: coinData.name,
+            slug: coinData.slug,
             priceHistory: {
               create: {
-                price: data[0].current_price || 0,
-                marketCap: data[0].market_cap || 0,
-                volume24h: data[0].total_volume || 0,
-                change24h: data[0].price_change_percentage_24h || 0,
+                price: quote.price || 0,
+                marketCap: quote.market_cap || 0,
+                volume24h: quote.volume_24h || 0,
+                change24h: quote.percent_change_24h || 0,
               },
             },
           },
@@ -156,12 +154,12 @@ export class CryptoService {
       }
 
       const cryptoData: CryptoPrice = {
-        symbol: data[0].symbol.toUpperCase(),
-        name: data[0].name,
-        price: data[0].current_price,
-        change24h: data[0].price_change_percentage_24h,
-        marketCap: data[0].market_cap,
-        lastUpdated: data[0].last_updated,
+        symbol: coinData.symbol,
+        name: coinData.name,
+        price: quote.price,
+        change24h: quote.percent_change_24h,
+        marketCap: quote.market_cap,
+        lastUpdated: quote.last_updated,
       };
 
       // Cache the result
@@ -187,20 +185,7 @@ export class CryptoService {
 
   private async isInTop100(symbol: string): Promise<boolean> {
     const top100 = await this.getTop100Cryptos();
-    return top100.some((crypto) => crypto.symbol.toUpperCase() === symbol);
-  }
-
-  private async getIdFromSymbol(symbol: string): Promise<string> {
-    const top100 = await this.getTop100Cryptos();
-    const crypto = top100.find((c) => c.symbol.toUpperCase() === symbol);
-
-    if (!crypto) {
-      throw new NotFoundException(
-        `Cryptocurrency ${symbol} not found in top 100`,
-      );
-    }
-
-    return crypto.id;
+    return top100.some((crypto) => crypto.symbol === symbol);
   }
 
   // Get top 100 cryptos (cached)
@@ -213,20 +198,20 @@ export class CryptoService {
       return cachedData;
     }
 
-    const apiKey = this.configService.get<string>('COINGECKO_API_KEY');
-    const url = 'https://api.coingecko.com/api/v3/coins/markets';
+    const apiKey = this.configService.get<string>('COINMARKETCAP_API_KEY');
+    const url =
+      'https://pro-api.coinmarketcap.com/v1/cryptocurrency/listings/latest';
 
     try {
       const { data } = await firstValueFrom(
         this.httpService
           .get(url, {
+            headers: {
+              'X-CMC_PRO_API_KEY': apiKey || '',
+            },
             params: {
-              vs_currency: 'usd',
-              order: 'market_cap_desc',
-              per_page: 100,
-              page: 1,
-              sparkline: false,
-              x_cg_demo_api_key: apiKey,
+              limit: 100,
+              convert: 'USD',
             },
           })
           .pipe(
@@ -242,10 +227,20 @@ export class CryptoService {
           ),
       );
 
-      // Cache the result
-      await this.cacheManager.set(this.CACHE_KEY_TOP_100, data, 300 * 1000); // Cache for 5 minutes
+      if (!data || !data.data) {
+        throw new InternalServerErrorException(
+          'Failed to fetch top 100 cryptocurrencies: Invalid response format',
+        );
+      }
 
-      return data;
+      // Cache the result
+      await this.cacheManager.set(
+        this.CACHE_KEY_TOP_100,
+        data.data,
+        300 * 1000,
+      ); // Cache for 5 minutes
+
+      return data.data;
     } catch (error) {
       this.logger.error(
         `Failed to get top 100 cryptos: ${error.message}`,
@@ -280,21 +275,20 @@ export class CryptoService {
   }
 
   private async fetchTop100Cryptos(): Promise<any[]> {
-    const apiKey = this.configService.get<string>('COINGECKO_API_KEY');
-    const url = 'https://api.coingecko.com/api/v3/coins/markets';
+    const apiKey = this.configService.get<string>('COINMARKETCAP_API_KEY');
+    const url =
+      'https://pro-api.coinmarketcap.com/v1/cryptocurrency/listings/latest';
 
     try {
       const { data } = await firstValueFrom(
         this.httpService
           .get(url, {
+            headers: {
+              'X-CMC_PRO_API_KEY': apiKey || '',
+            },
             params: {
-              vs_currency: 'usd',
-              order: 'market_cap_desc',
-              per_page: 100,
-              page: 1,
-              sparkline: false,
-              price_change_percentage: '24h',
-              x_cg_demo_api_key: apiKey,
+              limit: 100,
+              convert: 'USD',
             },
           })
           .pipe(
@@ -308,7 +302,13 @@ export class CryptoService {
           ),
       );
 
-      return data;
+      if (!data || !data.data) {
+        throw new Error(
+          'Failed to fetch top 100 cryptocurrencies: Invalid response format',
+        );
+      }
+
+      return data.data;
     } catch (error) {
       this.logger.error(
         `Failed to get top 100 cryptos: ${error.message}`,
@@ -321,27 +321,29 @@ export class CryptoService {
   private async saveToDatabase(cryptoData: any[]): Promise<void> {
     await this.prisma.$transaction(async (tx) => {
       for (const crypto of cryptoData) {
+        const quote = crypto.quote.USD;
+
         const existingCrypto = await tx.cryptoCurrency.upsert({
-          where: { symbol: crypto.symbol.toUpperCase() },
+          where: { symbol: crypto.symbol },
           update: {
             name: crypto.name,
-            slug: crypto.id,
+            slug: crypto.slug,
             updatedAt: new Date(),
           },
           create: {
-            symbol: crypto.symbol.toUpperCase(),
+            symbol: crypto.symbol,
             name: crypto.name,
-            slug: crypto.id,
+            slug: crypto.slug,
           },
         });
 
         await tx.priceHistory.create({
           data: {
             cryptoId: existingCrypto.id,
-            price: crypto.current_price || 0,
-            marketCap: crypto.market_cap || 0,
-            volume24h: crypto.total_volume || 0,
-            change24h: crypto.price_change_percentage_24h || 0,
+            price: quote.price || 0,
+            marketCap: quote.market_cap || 0,
+            volume24h: quote.volume_24h || 0,
+            change24h: quote.percent_change_24h || 0,
           },
         });
       }
