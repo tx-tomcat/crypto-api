@@ -1,8 +1,8 @@
 services:
   api:
     build: .
-    expose:
-      - '6000'
+    ports:
+      - '6000:6000'
     restart: always
     env_file:
       - .env
